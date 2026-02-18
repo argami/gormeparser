@@ -136,6 +136,49 @@ func ProcessDirectory(dir string, seccion models.Seccion, workers int) (*BatchRe
 }
 ```
 
+### Download and Process by Date Range
+
+```bash
+# Download and process BORME for a date range
+./bin/gormeparser -start-date 2024-01-01 -end-date 2024-01-31 \
+  -provincia Madrid -output ./json/
+
+# All provinces, Section A
+./bin/gormeparser -start-date 2024-01-01 -end-date 2024-01-31 \
+  -seccion A -output ./json/
+
+# Section C, all provinces
+./bin/gormeparser -start-date 2024-01-01 -end-date 2024-01-31 \
+  -seccion C -output ./json/
+
+# With 8 parallel workers
+./bin/gormeparser -start-date 2024-01-01 -end-date 2024-01-31 \
+  -workers 8 -output ./json/
+
+# Pretty-printed output
+./bin/gormeparser -start-date 2024-01-01 -end-date 2024-01-31 \
+  -pretty -output ./json/
+```
+
+### Supported Provinces
+
+```bash
+# By name
+-provincia Madrid
+-provincia Barcelona
+-provincia Valencia
+-provincia Sevilla
+-provincia Bizkaia  # or "Vizcaya", "Biscay"
+-provincia Gipuzkoa
+-provincia Asturias
+-provincia Murcia
+
+# By code
+-provincia 28  # Madrid
+-provincia 08  # Barcelona
+-provincia 46  # Valencia
+```
+
 ## API Usage
 
 ### Parse a PDF
@@ -204,6 +247,66 @@ func main() {
 
 	borme := result.(*models.Borme)
 	fmt.Printf("Parsed %d announcements\n", len(borme.Anuncios))
+}
+```
+
+### Download and Process by Date Range (API)
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/argami/gormeparser/internal/download"
+	"github.com/argami/gormeparser/internal/models"
+	"github.com/argami/gormeparser/internal/parser"
+)
+
+// DownloadAndProcess downloads and parses BORME for a date range
+func DownloadAndProcess(startDate, endDate time.Time, provincia, seccion string, workers int) error {
+	// Create directories
+	downloadDir := "./downloads"
+	jsonDir := "./json"
+	os.MkdirAll(downloadDir, 0755)
+	os.MkdirAll(jsonDir, 0755)
+
+	// Process each date
+	for d := startDate; !d.After(endDate); d = d.AddDate(0, 0, 1) {
+		// Generate filename
+		filename := filepath.Join(downloadDir, fmt.Sprintf("BORME-%s-%s.pdf", seccion, d.Format("2006-01-02")))
+
+		// Download
+		url := download.GetURLPDF(d, seccion, provincia)
+		if err := download.DownloadFile(url, filename); err != nil {
+			log.Printf("Failed to download %s: %v", d.Format("2006-01-02"), err)
+			continue
+		}
+
+		// Parse
+		result, err := parser.Parse(filename, models.Seccion(seccion))
+		if err != nil {
+			log.Printf("Failed to parse %s: %v", filename, err)
+			continue
+		}
+
+		// Save JSON
+		jsonFile := filepath.Join(jsonDir, fmt.Sprintf("BORME-%s-%s.json", seccion, d.Format("2006-01-02")))
+		var data []byte
+		switch b := result.(type) {
+		case *models.Borme:
+			data, _ = models.BormeToJSON(b, true)
+		case *models.BormeC:
+			// Convert to JSON...
+		}
+		os.WriteFile(jsonFile, data, 0644)
+	}
+
+	return nil
 }
 ```
 
