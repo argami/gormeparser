@@ -1,0 +1,172 @@
+name: BORME Extraction
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Extraction mode'
+        required: true
+        type: choice
+        options:
+          - date-range
+          - pdf-url
+
+      # Date range mode inputs
+      start_date:
+        description: 'Start date (YYYY-MM-DD) - for date-range mode'
+        required: false
+        type: string
+      end_date:
+        description: 'End date (YYYY-MM-DD) - for date-range mode'
+        required: false
+        type: string
+      provincia:
+        description: 'Province (e.g., Madrid, Barcelona, 28)'
+        required: false
+        type: string
+      seccion:
+        description: 'Section (A, B, or C)'
+        required: false
+        type: string
+        default: 'A'
+
+      # PDF URL mode inputs
+      pdf_url:
+        description: 'BORME PDF URL - for pdf-url mode'
+        required: false
+        type: string
+
+      pretty:
+        description: 'Pretty-print JSON output'
+        required: false
+        type: boolean
+        default: true
+      workers:
+        description: 'Number of parallel workers'
+        required: false
+        type: number
+        default: 4
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build binary
+        run: go build -o bin/gormeparser ./cmd/gormeparser
+
+      - name: Create output directories
+        run: |
+          mkdir -p output/json
+          mkdir -p output/downloads
+
+      # Date range mode
+      - name: Extract by date range
+        if: inputs.mode == 'date-range'
+        run: |
+          if [[ -z "${{ inputs.start_date }}" || -z "${{ inputs.end_date }}" ]]; then
+            echo "Error: start_date and end_date are required for date-range mode"
+            exit 1
+          fi
+
+          ./bin/gormeparser \
+            -start-date "${{ inputs.start_date }}" \
+            -end-date "${{ inputs.end_date }}" \
+            -provincia "${{ inputs.provincia }}" \
+            -seccion "${{ inputs.seccion || 'A' }}" \
+            -download-dir ./output/downloads \
+            -output ./output/json \
+            -pretty ${{ inputs.pretty }} \
+            -workers ${{ inputs.workers }}
+        continue-on-error: true
+
+      # PDF URL mode
+      - name: Extract from PDF URL
+        if: inputs.mode == 'pdf-url'
+        run: |
+          if [[ -z "${{ inputs.pdf_url }}" ]]; then
+            echo "Error: pdf_url is required for pdf-url mode"
+            exit 1
+          fi
+
+          # Extract filename from URL
+          FILENAME=$(basename "${{ inputs.pdf_url }}")
+          echo "Downloading: $FILENAME"
+
+          # Download PDF
+          curl -L -o "./output/downloads/$FILENAME" "${{ inputs.pdf_url }}"
+
+          # Parse to JSON
+          ./bin/gormeparser \
+            -file "./output/downloads/$FILENAME" \
+            -seccion "${{ inputs.seccion || 'A' }}" \
+            -output ./output/json \
+            -pretty ${{ inputs.pretty }}
+        continue-on-error: true
+
+      - name: List output files
+        run: |
+          echo "=== JSON Files ==="
+          find ./output/json -name "*.json" -type f | head -20
+
+          echo ""
+          echo "=== Downloaded Files ==="
+          find ./output/downloads -name "*.pdf" -type f | head -20
+
+          echo ""
+          echo "=== Summary ==="
+          JSON_COUNT=$(find ./output/json -name "*.json" -type f | wc -l)
+          PDF_COUNT=$(find ./output/downloads -name "*.pdf" -type f | wc -l)
+          echo "JSON files: $JSON_COUNT"
+          echo "PDF files: $PDF_COUNT"
+
+      - name: Upload JSON artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: borme-json-output
+          path: output/json/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Create downloadable JSON zip
+        if: always()
+        run: |
+          cd output/json
+          if ls *.json 1> /dev/null 2>&1; then
+            zip -r ../../borme-results.zip *.json
+            echo "JSON_ZIP_CREATED=true" >> $GITHUB_ENV
+          else
+            echo "No JSON files to zip"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## BORME Extraction Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Mode:** ${{ inputs.mode }}" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "${{ inputs.mode }}" == "date-range" ]]; then
+            echo "**Date Range:** ${{ inputs.start_date }} to ${{ inputs.end_date }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Province:** ${{ inputs.provincia || 'All' }}" >> $GITHUB_STEP_SUMMARY
+            echo "**Section:** ${{ inputs.seccion || 'A' }}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "**PDF URL:** ${{ inputs.pdf_url }}" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          JSON_COUNT=$(find ./output/json -name "*.json" -type f 2>/dev/null | wc -l)
+
+          echo "**Results:**" >> $GITHUB_STEP_SUMMARY
+          echo "- JSON files extracted: $JSON_COUNT" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Artifacts:**" >> $GITHUB_STEP_SUMMARY
+          echo "- [Download JSON output](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts)" >> $GITHUB_STEP_SUMMARY

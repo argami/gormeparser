@@ -282,24 +282,32 @@ func (p *PyPDF2Parser) parseActoValue(name, value string) {
 }
 
 // ParseFilename extracts date and section from filename
+// Expected format: BORME-{seccion}-{year}-{month}-{day}.pdf
+// Example: BORME-A-2015-10-27.pdf
 func ParseFilename(filename string) (time.Time, models.Seccion, int, error) {
 	base := strings.TrimSuffix(filename, ".pdf")
 	parts := strings.Split(base, "-")
 
-	if len(parts) < 4 {
+	if len(parts) < 5 {
 		return time.Time{}, "", 0, fmt.Errorf("invalid filename format: %s", filename)
 	}
 
 	seccion := models.Seccion(parts[1])
 
-	dateParts := strings.Split(parts[2], "-")
-	if len(dateParts) < 3 {
-		return time.Time{}, "", 0, fmt.Errorf("invalid date in filename: %s", filename)
+	year, err := strconv.Atoi(parts[2])
+	if err != nil {
+		return time.Time{}, "", 0, fmt.Errorf("invalid year in filename: %s", filename)
 	}
 
-	year, _ := strconv.Atoi(dateParts[0])
-	month, _ := strconv.Atoi(dateParts[1])
-	day, _ := strconv.Atoi(dateParts[2])
+	month, err := strconv.Atoi(parts[3])
+	if err != nil {
+		return time.Time{}, "", 0, fmt.Errorf("invalid month in filename: %s", filename)
+	}
+
+	day, err := strconv.Atoi(parts[4])
+	if err != nil {
+		return time.Time{}, "", 0, fmt.Errorf("invalid day in filename: %s", filename)
+	}
 
 	date := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
 	nbo := date.YearDay()
