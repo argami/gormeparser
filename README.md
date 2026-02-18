@@ -56,6 +56,86 @@ python -c "import bormeparser; b = bormeparser.parse('examples/BORME-A-2015-27-1
 ./bin/compare -python-json output_python.json -go-json output_go.json -v
 ```
 
+### Batch Processing
+
+Process multiple files in parallel:
+
+```bash
+# Process all PDFs in a directory (parallel, 4 workers by default)
+./bin/gormeparser -file ./pdfs/ -output ./json_output/
+
+# With 8 workers
+./bin/gormeparser -file ./pdfs/ -output ./json_output/ -workers 8
+
+# Pretty-printed output
+./bin/gormeparser -file ./pdfs/ -output ./json_output/ -pretty
+
+# Process XML files
+./bin/gormeparser -file ./xml/ -seccion C -output ./json_output/
+```
+
+Output:
+```
+Processing 100 files with 4 workers...
+Done: 98 successful, 2 failed
+FAIL: file1.pdf - error message
+FAIL: file2.pdf - error message
+```
+
+### Batch Processing API
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"path/filepath"
+	"strings"
+
+	"github.com/argami/gormeparser/internal/models"
+	"github.com/argami/gormeparser/internal/parser"
+)
+
+// BatchResult holds results from batch processing
+type BatchResult struct {
+	Total    int
+	Success  int
+	Failed   int
+	Errors   map[string]error
+}
+
+// ProcessDirectory processes all PDF/XML files in a directory
+func ProcessDirectory(dir string, seccion models.Seccion, workers int) (*BatchResult, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Find files
+	var files []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if ext == ".pdf" || ext == ".xml" || ext == ".html" {
+			files = append(files, filepath.Join(dir, e.Name()))
+		}
+	}
+
+	result := &BatchResult{
+		Total:  len(files),
+		Errors: make(map[string]error),
+	}
+
+	// Process in parallel (use goroutines with sync.WaitGroup)
+	// ... implementation with semaphore pattern
+
+	return result, nil
+}
+```
+
 ## API Usage
 
 ### Parse a PDF
