@@ -14,19 +14,19 @@ jobs:
         include:
           - os: linux
             arch: amd64
-            ext: ''
+            zip: gormeparser-linux-amd64.zip
           - os: linux
             arch: arm64
-            ext: ''
+            zip: gormeparser-linux-arm64.zip
           - os: macos
             arch: amd64
-            ext: ''
+            zip: gormeparser-macos-amd64.zip
           - os: macos
             arch: arm64
-            ext: ''
+            zip: gormeparser-macos-arm64.zip
           - os: windows
             arch: amd64
-            ext: .exe
+            zip: gormeparser-windows-amd64.zip
 
     steps:
       - name: Checkout
@@ -37,32 +37,29 @@ jobs:
         with:
           go-version: '1.21'
 
-      - name: Get version
-        id: version
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "VERSION=$VERSION" >> $GITHUB_ENV
-
       - name: Build binary
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
         run: |
-          EXT="${{ matrix.ext }}"
-          NAME="gormeparser-${GOOS}-${GOARCH}${EXT}"
+          EXT=""
           if [ "$GOOS" = "windows" ]; then
-            NAME="gormeparser-${GOOS}-${GOARCH}.exe"
-          else
-            NAME="gormeparser-${GOOS}-${GOARCH}"
+            EXT=".exe"
           fi
 
+          NAME="gormeparser${EXT}"
           go build -ldflags="-s -w" -o "$NAME" ./cmd/gormeparser
 
-          # Rename for upload
+          # Make executable
+          if [ "$GOOS" != "windows" ]; then
+            chmod +x "$NAME"
+          fi
+
+          # Create zip
           if [ "$GOOS" = "windows" ]; then
-            mv "$NAME" "gormeparser-${GOOS}-${GOARCH}.exe"
+            powershell -Command "Compress-Archive -Path gormeparser.exe -DestinationPath ${{ matrix.zip }} -Force"
           else
-            mv "$NAME" "gormeparser-${GOOS}-${GOARCH}"
+            zip -j ${{ matrix.zip }} "$NAME"
           fi
 
       - name: Upload release asset
@@ -71,9 +68,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./gormeparser-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
-          asset_name: gormeparser-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
-          asset_content_type: application/octet-stream
+          asset_path: ./${{ matrix.zip }}
+          asset_name: ${{ matrix.zip }}
+          asset_content_type: application/zip
 
   release-notes:
     runs-on: ubuntu-latest
@@ -88,41 +85,48 @@ jobs:
       - name: Generate release notes
         id: release-notes
         run: |
-          # Get previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           CURRENT_TAG=${{ github.ref_name }}
 
-          echo "## What's Changed" > release-notes.md
-          echo "" >> release-notes.md
+          cat > release-notes.md << 'HEADER'
+          ## What's Changed
+
+          HEADER
 
           if [ -n "$PREV_TAG" ]; then
-            CHANGES=$(git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD)
+            git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> release-notes.md
           else
-            CHANGES=$(git log --pretty=format:"- %s (%h)" -n 20)
+            git log --pretty=format:"- %s (%h)" -n 20 >> release-notes.md
           fi
 
-          echo "$CHANGES" >> release-notes.md
-          echo "" >> release-notes.md
+          cat >> release-notes.md << 'FOOTER'
 
-          # Add binary info
-          echo "## Binaries" >> release-notes.md
-          echo "" >> release-notes.md
-          echo "Pre-built binaries for:" >> release-notes.md
-          echo "- Linux amd64" >> release-notes.md
-          echo "- Linux arm64" >> release-notes.md
-          echo "- macOS amd64" >> release-notes.md
-          echo "- macOS arm64 (Apple Silicon)" >> release-notes.md
-          echo "- Windows amd64" >> release-notes.md
-          echo "" >> release-notes.md
+          ## Downloads
 
-          echo "## Usage" >> release-notes.md
-          echo "\`\`\`bash" >> release-notes.md
-          echo "# Parse a BORME PDF" >> release-notes.md
-          echo "./gormeparser-linux-amd64 --file BORME-A-2025-01-27.pdf --output ./json/" >> release-notes.md
-          echo "" >> release-notes.md
-          echo "# Download and process date range" >> release-notes.md
-          echo "./gormeparser-linux-amd64 --start-date 2025-01-01 --end-date 2025-01-31 --provincia Madrid" >> release-notes.md
-          echo "\`\`\`" >> release-notes.md
+          Pre-built binaries (zip format):
+
+          | Platform | Architecture | Download |
+          |----------|--------------|----------|
+          | Linux | amd64 | gormeparser-linux-amd64.zip |
+          | Linux | arm64 | gormeparser-linux-arm64.zip |
+          | macOS | amd64 | gormeparser-macos-amd64.zip |
+          | macOS | arm64 (Apple Silicon) | gormeparser-macos-arm64.zip |
+          | Windows | amd64 | gormeparser-windows-amd64.zip |
+
+          ## Usage
+
+          ```bash
+          # Linux/macOS
+          unzip gormeparser-linux-amd64.zip
+          ./gormeparser --help
+
+          # Windows
+          unzip gormeparser-windows-amd64.zip
+          gormeparser.exe --help
+          ```
+
+          Extract the zip and run the binary.
+          FOOTER
 
           cat release-notes.md
 
