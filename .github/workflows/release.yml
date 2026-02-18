@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            ext: ''
+          - os: linux
+            arch: arm64
+            ext: ''
+          - os: macos
+            arch: amd64
+            ext: ''
+          - os: macos
+            arch: arm64
+            ext: ''
+          - os: windows
+            arch: amd64
+            ext: .exe
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          EXT="${{ matrix.ext }}"
+          NAME="gormeparser-${GOOS}-${GOARCH}${EXT}"
+          if [ "$GOOS" = "windows" ]; then
+            NAME="gormeparser-${GOOS}-${GOARCH}.exe"
+          else
+            NAME="gormeparser-${GOOS}-${GOARCH}"
+          fi
+
+          go build -ldflags="-s -w" -o "$NAME" ./cmd/gormeparser
+
+          # Rename for upload
+          if [ "$GOOS" = "windows" ]; then
+            mv "$NAME" "gormeparser-${GOOS}-${GOARCH}.exe"
+          else
+            mv "$NAME" "gormeparser-${GOOS}-${GOARCH}"
+          fi
+
+      - name: Upload release asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./gormeparser-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          asset_name: gormeparser-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          asset_content_type: application/octet-stream
+
+  release-notes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: release-notes
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          CURRENT_TAG=${{ github.ref_name }}
+
+          echo "## What's Changed" > release-notes.md
+          echo "" >> release-notes.md
+
+          if [ -n "$PREV_TAG" ]; then
+            CHANGES=$(git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD)
+          else
+            CHANGES=$(git log --pretty=format:"- %s (%h)" -n 20)
+          fi
+
+          echo "$CHANGES" >> release-notes.md
+          echo "" >> release-notes.md
+
+          # Add binary info
+          echo "## Binaries" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "Pre-built binaries for:" >> release-notes.md
+          echo "- Linux amd64" >> release-notes.md
+          echo "- Linux arm64" >> release-notes.md
+          echo "- macOS amd64" >> release-notes.md
+          echo "- macOS arm64 (Apple Silicon)" >> release-notes.md
+          echo "- Windows amd64" >> release-notes.md
+          echo "" >> release-notes.md
+
+          echo "## Usage" >> release-notes.md
+          echo "\`\`\`bash" >> release-notes.md
+          echo "# Parse a BORME PDF" >> release-notes.md
+          echo "./gormeparser-linux-amd64 --file BORME-A-2025-01-27.pdf --output ./json/" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "# Download and process date range" >> release-notes.md
+          echo "./gormeparser-linux-amd64 --start-date 2025-01-01 --end-date 2025-01-31 --provincia Madrid" >> release-notes.md
+          echo "\`\`\`" >> release-notes.md
+
+          cat release-notes.md
+
+      - name: Update release body
+        run: |
+          curl -s -X PATCH \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            https://api.github.com/repos/${{ github.repository }}/releases/${{ github.event.release.id }} \
+            -d '{"body": $(cat release-notes.md | jq -Rs .)}'
